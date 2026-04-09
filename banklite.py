@@ -151,3 +151,43 @@ class StatementBuilder:
             "total_charged": round(total, 2),
             "count":         len(txs),
         }
+
+
+# ── Task 4: FeeCalculator & CheckoutService ──────────────────
+class FeeCalculator:
+    """Pure fee logic (no side effects)."""
+
+    BASE_FEE_RATE = 0.029
+    FIXED_FEE = 0.30
+    INTL_SURCHARGE = 0.015
+
+    def processing_fee(self, amount: float, currency: str = "USD") -> float:
+        rate = self.BASE_FEE_RATE
+        if currency != "USD":
+            rate = self.BASE_FEE_RATE + self.INTL_SURCHARGE
+        return round(amount * rate + self.FIXED_FEE, 2)
+
+    def net_amount(self, amount: float, currency: str = "USD") -> float:
+        fee = self.processing_fee(amount, currency)
+        return round(amount - fee, 2)
+
+
+class CheckoutService:
+    """Computes fees and runs the charge through the gateway."""
+
+    def __init__(self, fee_calc: FeeCalculator, gateway: PaymentGateway):
+        self._fee_calc = fee_calc
+        self._gateway = gateway
+
+    def checkout(self, tx: Transaction) -> dict:
+        fee = self._fee_calc.processing_fee(tx.amount, tx.currency)
+        net = self._fee_calc.net_amount(tx.amount, tx.currency)
+        charged = self._gateway.charge(tx)
+        status = "success" if charged else "declined"
+        return {
+            "tx_id": tx.tx_id,
+            "amount": tx.amount,
+            "fee": fee,
+            "net": net,
+            "status": status,
+        }
