@@ -235,96 +235,69 @@ class TestCheckoutServiceWithSpy(unittest.TestCase):
         Default values mean each test only specifies what it cares about."""
         return Transaction(tx_id=tx_id, user_id=user_id, amount=amount, currency=currency)
 
+    def _spy_checkout_service(self):
+        real = FeeCalculator()
+        spy = MagicMock(wraps=real)
+        gw = MagicMock()
+        gw.charge.return_value = True
+        return CheckoutService(spy, gw), spy
+
     def test_usd_processing_fee_is_correct(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
-        tx = self._make_tx(amount=100.0)
-        receipt = svc.checkout(tx)
-        self.assertEqual(receipt["fee"], 3.20)
+        svc, _ = self._spy_checkout_service()
+        r = svc.checkout(self._make_tx(amount=100.0))
+        self.assertEqual(r["fee"], 3.20)
 
     def test_international_fee_includes_surcharge(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
-        tx = self._make_tx(amount=200.0, currency="EUR")
-        receipt = svc.checkout(tx)
-        self.assertEqual(receipt["fee"], 9.10)
+        svc, _ = self._spy_checkout_service()
+        r = svc.checkout(self._make_tx(amount=200.0, currency="EUR"))
+        self.assertEqual(r["fee"], 9.10)
 
     def test_processing_fee_called_with_correct_amount_and_currency(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
+        svc, spy = self._spy_checkout_service()
         tx = self._make_tx(amount=200.0, currency="EUR")
         svc.checkout(tx)
-        spy_calc.processing_fee.assert_called_once_with(tx.amount, tx.currency)
+        spy.processing_fee.assert_called_once_with(tx.amount, tx.currency)
 
     def test_net_amount_called_with_correct_amount_and_currency(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
+        svc, spy = self._spy_checkout_service()
         tx = self._make_tx(amount=200.0, currency="EUR")
         svc.checkout(tx)
-        spy_calc.net_amount.assert_called_once_with(tx.amount, tx.currency)
+        spy.net_amount.assert_called_once_with(tx.amount, tx.currency)
 
     def test_each_fee_method_called_exactly_once_per_checkout(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
-        tx = self._make_tx(amount=100.0)
-        svc.checkout(tx)
-        spy_calc.processing_fee.assert_called_once()
-        spy_calc.net_amount.assert_called_once()
+        svc, spy = self._spy_checkout_service()
+        svc.checkout(self._make_tx(amount=100.0))
+        spy.processing_fee.assert_called_once()
+        spy.net_amount.assert_called_once()
 
     def test_spy_return_matches_fee_in_receipt(self):
-        real_calc = FeeCalculator()
-        spy_calc = MagicMock(wraps=real_calc)
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(spy_calc, gateway)
-        tx = self._make_tx(amount=100.0)
-        receipt = svc.checkout(tx)
-        expected_fee = round(100 * FeeCalculator.BASE_FEE_RATE + FeeCalculator.FIXED_FEE, 2)
-        self.assertEqual(receipt["fee"], expected_fee)
-        self.assertEqual(receipt["fee"], 3.20)
+        svc, _ = self._spy_checkout_service()
+        r = svc.checkout(self._make_tx(amount=100.0))
+        want = round(100 * FeeCalculator.BASE_FEE_RATE + FeeCalculator.FIXED_FEE, 2)
+        self.assertEqual(r["fee"], want)
 
     def test_partial_spy_on_net_amount_only(self):
-        real_calc = FeeCalculator()
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(real_calc, gateway)
+        calc = FeeCalculator()
+        gw = MagicMock()
+        gw.charge.return_value = True
+        svc = CheckoutService(calc, gw)
         tx = self._make_tx(amount=100.0)
-        with patch.object(
-            real_calc, "net_amount", wraps=real_calc.net_amount
-        ) as spy_net:
-            receipt = svc.checkout(tx)
+        with patch.object(calc, "net_amount", wraps=calc.net_amount) as spy_net:
+            r = svc.checkout(tx)
         spy_net.assert_called_once_with(tx.amount, tx.currency)
-        self.assertEqual(receipt["net"], receipt["amount"] - receipt["fee"])
+        self.assertEqual(r["net"], r["amount"] - r["fee"])
 
     def test_contrast_mock_only_tests_wiring_not_formula(self):
-        # With a plain mock, we verify CheckoutService passes calculator outputs into
-        # the receipt—not that FeeCalculator's fee math is correct. A spy checks both.
-        mock_calc = MagicMock()
-        mock_calc.processing_fee.return_value = 5.00
-        mock_calc.net_amount.return_value = 95.00
-        gateway = MagicMock()
-        gateway.charge.return_value = True
-        svc = CheckoutService(mock_calc, gateway)
-        tx = self._make_tx(amount=100.0)
-        receipt = svc.checkout(tx)
-        self.assertEqual(receipt["fee"], 5.00)
-        self.assertEqual(receipt["net"], 95.00)
+        # Mock: receipt uses calculator outputs; it does not prove FeeCalculator math.
+        # Spy: records calls and still runs real fee logic.
+        m = MagicMock()
+        m.processing_fee.return_value = 5.00
+        m.net_amount.return_value = 95.00
+        gw = MagicMock()
+        gw.charge.return_value = True
+        r = CheckoutService(m, gw).checkout(self._make_tx(amount=100.0))
+        self.assertEqual(r["fee"], 5.00)
+        self.assertEqual(r["net"], 95.00)
 
 
-if __name__ == "__main__":
-    unittest.main()
+
