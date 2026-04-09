@@ -1,1 +1,0 @@
-# Stubs-Mocks-Spies-Exercise
